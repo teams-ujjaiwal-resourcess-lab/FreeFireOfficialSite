@@ -1,7 +1,6 @@
-Flask==2.3.3
-requests==2.31.0
-Pillow==10.0.1
-httpx==0.24.1
-pycryptodome==3.18.0
-protobuf==3.20.3
-asyncio==3.4.3
+flask
+requests
+pillow
+pycryptodome
+protobuf
+google-protobuf

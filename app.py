@@ -7,9 +7,7 @@ import json
 import time
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
-from google.protobuf import json_format, message
-from google.protobuf.message import Message
-
+from google.protobuf import json_format
 import FreeFire_pb2
 import main_pb2
 import zitado_pb2
@@ -38,12 +36,12 @@ def aes_cbc_encrypt(key: bytes, iv: bytes, plaintext: bytes) -> bytes:
     aes = AES.new(key, AES.MODE_CBC, iv)
     return aes.encrypt(pad_data(plaintext))
 
-def decode_protobuf(encoded_data: bytes, message_type) -> Message:
+def decode_protobuf(encoded_data: bytes, message_type):
     instance = message_type()
     instance.ParseFromString(encoded_data)
     return instance
 
-def json_to_proto(json_data: str, proto_message: Message) -> bytes:
+def json_to_proto(json_data: str, proto_message):
     json_format.ParseDict(json.loads(json_data), proto_message)
     return proto_message.SerializeToString()
 
@@ -67,14 +65,24 @@ def get_access_token(account: str):
         'Content-Type': "application/x-www-form-urlencoded"
     }
     
-    response = requests.post(url, data=payload, headers=headers)
-    data = response.json()
-    return data.get("access_token", "0"), data.get("open_id", "0")
+    try:
+        response = requests.post(url, data=payload, headers=headers, timeout=TIMEOUT)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("access_token", "0"), data.get("open_id", "0")
+    except Exception as e:
+        print(f"Error getting access token: {e}")
+        return "0", "0"
 
 def create_jwt(region: str):
     try:
         account = get_account_credentials(region)
         token_val, open_id = get_access_token(account)
+        
+        if token_val == "0" or open_id == "0":
+            print(f"Failed to get access token for region {region}")
+            return
+            
         body = json.dumps({
             "open_id": open_id, 
             "open_id_type": "4", 
@@ -82,7 +90,8 @@ def create_jwt(region: str):
             "orign_platform_type": "4"
         })
         
-        proto_bytes = json_to_proto(body, FreeFire_pb2.LoginReq())
+        login_req = FreeFire_pb2.LoginReq()
+        proto_bytes = json_to_proto(body, login_req)
         payload = aes_cbc_encrypt(MAIN_KEY, MAIN_IV, proto_bytes)
         url = "https://loginbp.ggblueshark.com/MajorLogin"
         
@@ -97,43 +106,68 @@ def create_jwt(region: str):
             'ReleaseVersion': RELEASEVERSION
         }
         
-        response = requests.post(url, data=payload, headers=headers)
-        msg = json.loads(json_format.MessageToJson(decode_protobuf(response.content, FreeFire_pb2.LoginRes)))
+        response = requests.post(url, data=payload, headers=headers, timeout=TIMEOUT)
+        response.raise_for_status()
+        
+        login_res = decode_protobuf(response.content, FreeFire_pb2.LoginRes())
+        msg_json = json_format.MessageToJson(login_res)
+        msg = json.loads(msg_json)
         
         cached_tokens[region] = {
-            'token': f"Bearer {msg.get('token','0')}",
-            'region': msg.get('lockRegion','0'),
-            'server_url': msg.get('serverUrl','0'),
+            'token': f"Bearer {msg.get('token', '0')}",
+            'region': msg.get('lockRegion', '0'),
+            'server_url': msg.get('serverUrl', '0'),
             'expires_at': time.time() + 25200  # 7 hours
         }
+        
+        print(f"Successfully created JWT for region {region}")
         
     except Exception as e:
         print(f"Error creating JWT for {region}: {e}")
 
 def initialize_tokens():
+    print("Initializing tokens for all regions...")
     for region in SUPPORTED_REGIONS:
         create_jwt(region)
+        time.sleep(1)  # Rate limiting
+    print("Token initialization completed")
 
 def get_token_info(region: str):
+    region = region.upper()
     info = cached_tokens.get(region)
+    
+    # Check if token exists and is not expired
     if info and time.time() < info['expires_at']:
         return info['token'], info['region'], info['server_url']
     
+    # Token expired or doesn't exist, create new one
+    print(f"Token for region {region} expired or not found, creating new one...")
     create_jwt(region)
+    
     info = cached_tokens.get(region)
     if info:
         return info['token'], info['region'], info['server_url']
     
     return "0", "0", "0"
 
-def GetAccountInformation(uid, unk, region, endpoint):
+def GetAccountInformation(uid, unk, region, endpoint="/GetPlayerPersonalShow"):
     region = region.upper()
     if region not in SUPPORTED_REGIONS:
         raise ValueError(f"Unsupported region: {region}")
     
-    payload = json_to_proto(json.dumps({'a': uid, 'b': unk}), main_pb2.GetPlayerPersonalShow())
-    data_enc = aes_cbc_encrypt(MAIN_KEY, MAIN_IV, payload)
+    # Create protobuf payload
+    get_player_req = main_pb2.GetPlayerPersonalShow()
+    payload_data = {'a': int(uid), 'b': int(unk)}
+    proto_bytes = json_to_proto(json.dumps(payload_data), get_player_req)
+    
+    # Encrypt payload
+    data_enc = aes_cbc_encrypt(MAIN_KEY, MAIN_IV, proto_bytes)
+    
+    # Get token and server info
     token, lock, server = get_token_info(region)
+    
+    if token == "0" or server == "0":
+        raise ValueError("Failed to get valid token or server URL")
     
     headers = {
         'User-Agent': USERAGENT, 
@@ -147,13 +181,20 @@ def GetAccountInformation(uid, unk, region, endpoint):
         'ReleaseVersion': RELEASEVERSION
     }
     
-    response = requests.post(server + endpoint, data=data_enc, headers=headers)
-    return json.loads(json_format.MessageToJson(decode_protobuf(response.content, zitado_pb2.Users)))
+    try:
+        response = requests.post(server + endpoint, data=data_enc, headers=headers, timeout=TIMEOUT)
+        response.raise_for_status()
+        
+        # Decode response
+        users_data = decode_protobuf(response.content, zitado_pb2.Users)
+        return json.loads(json_format.MessageToJson(users_data))
+        
+    except Exception as e:
+        raise Exception(f"API request failed: {e}")
 
 def fetch_player_info(uid, region):
     try:
-        # You'll need to provide the actual endpoint here
-        result = GetAccountInformation(uid, 0, region, "/GetPlayerPersonalShow")
+        result = GetAccountInformation(uid, 0, region)
         return result
     except Exception as e:
         return {"error": f"Failed to fetch player info: {str(e)}"}
@@ -169,34 +210,59 @@ def fetch_images(banner_id, avatar_id):
         if banner_response.status_code == 200 and avatar_response.status_code == 200:
             return banner_response.content, avatar_response.content
         return None, None
-    except Exception:
+    except Exception as e:
+        print(f"Error fetching images: {e}")
         return None, None
 
 def load_font(font_path, size):
     try:
         return ImageFont.truetype(font_path, size)
     except:
-        return ImageFont.load_default()
+        try:
+            # Try system fonts
+            return ImageFont.load_default()
+        except:
+            # Fallback to basic font
+            return ImageFont.load_default()
 
 def overlay_images(banner_img, avatar_img, player_name, guild_name=None, level=None):
     try:
+        # Open and convert images
         banner = Image.open(io.BytesIO(banner_img)).convert("RGBA")
         avatar = Image.open(io.BytesIO(avatar_img)).convert("RGBA").resize((55, 60))
+        
+        # Paste avatar onto banner
         banner.paste(avatar, (0, 0), avatar)
 
+        # Create drawing context
         draw = ImageDraw.Draw(banner)
-        bold_font = load_font("arialbd.ttf", 19)
-        guild_font = load_font("arialbd.ttf", 22)
-        level_font = load_font("arialbd.ttf", 20)
+        
+        # Load fonts (with fallbacks)
+        try:
+            bold_font = ImageFont.truetype("arialbd.ttf", 19)
+            guild_font = ImageFont.truetype("arialbd.ttf", 22)
+            level_font = ImageFont.truetype("arialbd.ttf", 20)
+        except:
+            # Use default font if specific fonts not available
+            default_font = ImageFont.load_default()
+            bold_font = default_font
+            guild_font = default_font
+            level_font = default_font
 
+        # Draw player name
         draw.text((57, 2), player_name, fill="white", font=bold_font)
+        
+        # Draw guild name if available
         if guild_name:
             draw.text((73, 48), guild_name, fill="#DDDDDD", font=guild_font)
+        
+        # Draw level if available
         if level:
             banner_w, banner_h = banner.size
-            draw.text((banner_w - 35, banner_h - 12), f"Lvl - {level}", fill="white", font=level_font, stroke_width=1, stroke_fill="black")
+            draw.text((banner_w - 80, banner_h - 25), f"Lvl {level}", fill="white", font=level_font, stroke_width=1, stroke_fill="black")
 
         return banner
+        
     except Exception as e:
         print(f"Error overlaying images: {e}")
         return None
@@ -207,18 +273,25 @@ def generate_image():
     region = request.args.get('region')
     key = request.args.get('key')
 
+    # Validate API key
     if key != API_KEY:
         return jsonify({"error": "Invalid API key"}), 403
+    
+    # Validate required parameters
     if not uid or not region:
         return jsonify({"error": "Missing uid or region in parameter"}), 400
 
+    # Fetch player data
     player_data = fetch_player_info(uid, region)
     if "error" in player_data:
         return jsonify(player_data), 400
 
-    # Extract data from player data
-    basic_info = player_data.get("basicinfo", [{}])[0] if player_data.get("basicinfo") else {}
-    clan_info = player_data.get("claninfo", [{}])[0] if player_data.get("claninfo") else {}
+    # Extract player information
+    basic_info_list = player_data.get("basicinfo", [])
+    clan_info_list = player_data.get("claninfo", [])
+    
+    basic_info = basic_info_list[0] if basic_info_list else {}
+    clan_info = clan_info_list[0] if clan_info_list else {}
 
     banner_id = basic_info.get("banner", 0)
     avatar_id = basic_info.get("avatar", 0)
@@ -226,14 +299,17 @@ def generate_image():
     level = str(basic_info.get("level", 0))
     guild_name = clan_info.get("clanname")
 
+    # Fetch images
     banner_img, avatar_img = fetch_images(banner_id, avatar_id)
     if not banner_img or not avatar_img:
         return jsonify({"error": "Failed to fetch avatar or banner image"}), 500
 
+    # Generate final image
     final_image = overlay_images(banner_img, avatar_img, player_name, guild_name, level)
     if not final_image:
         return jsonify({"error": "Failed to generate image"}), 500
 
+    # Return image as response
     img_buffer = io.BytesIO()
     final_image.save(img_buffer, format="PNG")
     img_buffer.seek(0)
@@ -242,11 +318,32 @@ def generate_image():
 
 @app.route('/check_key', methods=['GET'])
 def check_key():
-    return jsonify({"status": "valid" if request.args.get('key') == API_KEY else "invalid"})
+    key = request.args.get('key')
+    return jsonify({"status": "valid" if key == API_KEY else "invalid"})
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    return jsonify({"status": "healthy", "regions_initialized": len(cached_tokens)})
+    return jsonify({
+        "status": "healthy", 
+        "regions_initialized": len(cached_tokens),
+        "supported_regions": list(SUPPORTED_REGIONS)
+    })
+
+@app.route('/tokens', methods=['GET'])
+def list_tokens():
+    key = request.args.get('key')
+    if key != API_KEY:
+        return jsonify({"error": "Invalid API key"}), 403
+        
+    token_info = {}
+    for region, info in cached_tokens.items():
+        token_info[region] = {
+            'has_token': info['token'] != "Bearer 0",
+            'expires_in': max(0, int(info['expires_at'] - time.time())),
+            'server_url': info['server_url'][:50] + "..." if len(info['server_url']) > 50 else info['server_url']
+        }
+    
+    return jsonify(token_info)
 
 # Initialize tokens when app starts
 @app.before_first_request
@@ -254,4 +351,5 @@ def initialize():
     initialize_tokens()
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    print("Starting FreeFire Avatar Banner Generator...")
+    app.run(host='0.0.0.0', port=5000, debug=False)
