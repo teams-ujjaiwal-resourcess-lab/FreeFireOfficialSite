@@ -5,8 +5,6 @@ import io
 import base64
 import json
 import time
-import asyncio
-import httpx
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 from google.protobuf import json_format, message
@@ -22,7 +20,7 @@ MAIN_IV = base64.b64decode('Nm95WkRyMjJFM3ljaGpNJQ==')
 RELEASEVERSION = "OB51"
 USERAGENT = "Dalvik/2.1.0 (Linux; U; Android 13; CPH2095 Build/RKQ1.211119.001)"
 SUPPORTED_REGIONS = {"IND", "BR", "US", "SAC", "NA", "SG", "RU", "ID", "TW", "VN", "TH", "ME", "PK", "CIS", "BD", "EUROPE"}
-API_KEY = "your_api_key_here"  # Add your API key
+API_KEY = "your_api_key_here"
 TIMEOUT = 10
 
 # === Flask App Setup ===
@@ -45,7 +43,7 @@ def decode_protobuf(encoded_data: bytes, message_type) -> Message:
     instance.ParseFromString(encoded_data)
     return instance
 
-async def json_to_proto(json_data: str, proto_message: Message) -> bytes:
+def json_to_proto(json_data: str, proto_message: Message) -> bytes:
     json_format.ParseDict(json.loads(json_data), proto_message)
     return proto_message.SerializeToString()
 
@@ -59,23 +57,35 @@ def get_account_credentials(region: str) -> str:
         return "uid=3939507748&password=55A6E86C5A338D133BAD02964EFB905C7C35A86440496BC210A682146DCE9F32"
 
 # === Token Generation ===
-async def get_access_token(account: str):
+def get_access_token(account: str):
     url = "https://ffmconnect.live.gop.garenanow.com/oauth/guest/token/grant"
     payload = account + "&response_type=token&client_type=2&client_secret=2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3&client_id=100067"
-    headers = {'User-Agent': USERAGENT, 'Connection': "Keep-Alive", 'Accept-Encoding': "gzip", 'Content-Type': "application/x-www-form-urlencoded"}
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(url, data=payload, headers=headers)
-        data = resp.json()
-        return data.get("access_token", "0"), data.get("open_id", "0")
+    headers = {
+        'User-Agent': USERAGENT, 
+        'Connection': "Keep-Alive", 
+        'Accept-Encoding': "gzip", 
+        'Content-Type': "application/x-www-form-urlencoded"
+    }
+    
+    response = requests.post(url, data=payload, headers=headers)
+    data = response.json()
+    return data.get("access_token", "0"), data.get("open_id", "0")
 
-async def create_jwt(region: str):
+def create_jwt(region: str):
     try:
         account = get_account_credentials(region)
-        token_val, open_id = await get_access_token(account)
-        body = json.dumps({"open_id": open_id, "open_id_type": "4", "login_token": token_val, "orign_platform_type": "4"})
-        proto_bytes = await json_to_proto(body, FreeFire_pb2.LoginReq())
+        token_val, open_id = get_access_token(account)
+        body = json.dumps({
+            "open_id": open_id, 
+            "open_id_type": "4", 
+            "login_token": token_val, 
+            "orign_platform_type": "4"
+        })
+        
+        proto_bytes = json_to_proto(body, FreeFire_pb2.LoginReq())
         payload = aes_cbc_encrypt(MAIN_KEY, MAIN_IV, proto_bytes)
         url = "https://loginbp.ggblueshark.com/MajorLogin"
+        
         headers = {
             'User-Agent': USERAGENT, 
             'Connection': "Keep-Alive", 
@@ -86,40 +96,44 @@ async def create_jwt(region: str):
             'X-GA': "v1 1", 
             'ReleaseVersion': RELEASEVERSION
         }
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(url, data=payload, headers=headers)
-            msg = json.loads(json_format.MessageToJson(decode_protobuf(resp.content, FreeFire_pb2.LoginRes)))
-            cached_tokens[region] = {
-                'token': f"Bearer {msg.get('token','0')}",
-                'region': msg.get('lockRegion','0'),
-                'server_url': msg.get('serverUrl','0'),
-                'expires_at': time.time() + 25200
-            }
+        
+        response = requests.post(url, data=payload, headers=headers)
+        msg = json.loads(json_format.MessageToJson(decode_protobuf(response.content, FreeFire_pb2.LoginRes)))
+        
+        cached_tokens[region] = {
+            'token': f"Bearer {msg.get('token','0')}",
+            'region': msg.get('lockRegion','0'),
+            'server_url': msg.get('serverUrl','0'),
+            'expires_at': time.time() + 25200  # 7 hours
+        }
+        
     except Exception as e:
         print(f"Error creating JWT for {region}: {e}")
 
-async def initialize_tokens():
-    tasks = [create_jwt(r) for r in SUPPORTED_REGIONS]
-    await asyncio.gather(*tasks)
+def initialize_tokens():
+    for region in SUPPORTED_REGIONS:
+        create_jwt(region)
 
-async def get_token_info(region: str):
+def get_token_info(region: str):
     info = cached_tokens.get(region)
     if info and time.time() < info['expires_at']:
         return info['token'], info['region'], info['server_url']
-    await create_jwt(region)
+    
+    create_jwt(region)
     info = cached_tokens.get(region)
     if info:
         return info['token'], info['region'], info['server_url']
+    
     return "0", "0", "0"
 
-async def GetAccountInformation(uid, unk, region, endpoint):
+def GetAccountInformation(uid, unk, region, endpoint):
     region = region.upper()
     if region not in SUPPORTED_REGIONS:
         raise ValueError(f"Unsupported region: {region}")
     
-    payload = await json_to_proto(json.dumps({'a': uid, 'b': unk}), main_pb2.GetPlayerPersonalShow())
+    payload = json_to_proto(json.dumps({'a': uid, 'b': unk}), main_pb2.GetPlayerPersonalShow())
     data_enc = aes_cbc_encrypt(MAIN_KEY, MAIN_IV, payload)
-    token, lock, server = await get_token_info(region)
+    token, lock, server = get_token_info(region)
     
     headers = {
         'User-Agent': USERAGENT, 
@@ -133,14 +147,13 @@ async def GetAccountInformation(uid, unk, region, endpoint):
         'ReleaseVersion': RELEASEVERSION
     }
     
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(server + endpoint, data=data_enc, headers=headers)
-        return json.loads(json_format.MessageToJson(decode_protobuf(resp.content, zitado_pb2.Users)))
+    response = requests.post(server + endpoint, data=data_enc, headers=headers)
+    return json.loads(json_format.MessageToJson(decode_protobuf(response.content, zitado_pb2.Users)))
 
 def fetch_player_info(uid, region):
     try:
-        # Example implementation - you'll need to provide the actual endpoint
-        result = asyncio.run(GetAccountInformation(uid, 0, region, "/GetPlayerPersonalShow"))
+        # You'll need to provide the actual endpoint here
+        result = GetAccountInformation(uid, 0, region, "/GetPlayerPersonalShow")
         return result
     except Exception as e:
         return {"error": f"Failed to fetch player info: {str(e)}"}
@@ -153,7 +166,9 @@ def fetch_images(banner_id, avatar_id):
         banner_response = requests.get(banner_url, timeout=TIMEOUT)
         avatar_response = requests.get(avatar_url, timeout=TIMEOUT)
 
-        return (banner_response.content, avatar_response.content) if banner_response.status_code == 200 and avatar_response.status_code == 200 else (None, None)
+        if banner_response.status_code == 200 and avatar_response.status_code == 200:
+            return banner_response.content, avatar_response.content
+        return None, None
     except Exception:
         return None, None
 
@@ -201,7 +216,7 @@ def generate_image():
     if "error" in player_data:
         return jsonify(player_data), 400
 
-    # Extract data from zitado user
+    # Extract data from player data
     basic_info = player_data.get("basicinfo", [{}])[0] if player_data.get("basicinfo") else {}
     clan_info = player_data.get("claninfo", [{}])[0] if player_data.get("claninfo") else {}
 
@@ -229,12 +244,14 @@ def generate_image():
 def check_key():
     return jsonify({"status": "valid" if request.args.get('key') == API_KEY else "invalid"})
 
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({"status": "healthy", "regions_initialized": len(cached_tokens)})
+
 # Initialize tokens when app starts
 @app.before_first_request
 def initialize():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(initialize_tokens())
+    initialize_tokens()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
