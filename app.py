@@ -102,11 +102,6 @@ async def initialize_tokens():
     tasks = [create_jwt(r) for r in SUPPORTED_REGIONS]
     await asyncio.gather(*tasks)
 
-async def refresh_tokens_periodically():
-    while True:
-        await asyncio.sleep(25200)  # 7 hours
-        await initialize_tokens()
-
 async def get_token_info(region: str):
     info = cached_tokens.get(region)
     if info and time.time() < info['expires_at']:
@@ -144,9 +139,8 @@ async def GetAccountInformation(uid, unk, region, endpoint):
 
 def fetch_player_info(uid, region):
     try:
-    
-        # Example implementation:
-        result = asyncio.run(GetAccountInformation(uid, 0, region, "/endpoint_here"))
+        # Example implementation - you'll need to provide the actual endpoint
+        result = asyncio.run(GetAccountInformation(uid, 0, region, "/GetPlayerPersonalShow"))
         return result
     except Exception as e:
         return {"error": f"Failed to fetch player info: {str(e)}"}
@@ -238,7 +232,9 @@ def check_key():
 # Initialize tokens when app starts
 @app.before_first_request
 def initialize():
-    asyncio.run(initialize_tokens())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(initialize_tokens())
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
