@@ -34,8 +34,8 @@ def get_conn():
         user=url.username,
         password=url.password,
         host=url.hostname,
-        port=url.port,
-        database=url.path[1:], 
+        port=url.port or 5432,   # FIXED ✅
+        database=url.path[1:],   # remove "/"
         ssl_context=True
     )
 
