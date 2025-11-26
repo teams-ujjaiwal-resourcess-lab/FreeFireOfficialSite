@@ -17,15 +17,20 @@ import secrets
 import string
 from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
+import os  # ✅ ADD THIS
 
 app = Flask(__name__)
 
-# PostgreSQL configuration
-DATABASE_URL = "postgresql://neondb_owner:npg_Y9yimA8vNXDu@ep-bold-voice-adb8shfq-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+# ✅ FIX: Environment variable use karo
+DATABASE_URL = os.environ.get('DATABASE_URL', "postgresql://neondb_owner:npg_Y9yimA8vNXDu@ep-bold-voice-adb8shfq-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require")
 
 def get_db_connection():
     """Create and return a database connection"""
-    return pg8000.connect(DATABASE_URL)
+    try:
+        return pg8000.connect(DATABASE_URL)
+    except Exception as e:
+        app.logger.error(f"Database connection failed: {e}")
+        raise
 
 def init_database():
     """Initialize database tables if they don't exist"""
@@ -336,6 +341,7 @@ def update_key_usage(api_key, decrement=1):
     except Exception as e:
         app.logger.error(f"Error updating key usage: {e}")
 
+# ✅ ADD ALL THESE ROUTES
 @app.route('/api/key/create', methods=['POST'])
 def create_key():
     try:
