@@ -1,6 +1,9 @@
 flask
+pg8000
+aiohttp
 requests
-pillow
-pycryptodome
+python-dotenv
+gunicorn
 protobuf
-google-protobuf
+pycryptodome
+apscheduler
