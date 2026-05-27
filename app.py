@@ -14,7 +14,7 @@ import AccountPersonalShow_pb2
 from google.protobuf import json_format, message
 from google.protobuf.message import Message
 from Crypto.Cipher import AES
-import base64
+import base64>
 
 # === Settings ===
 MAIN_KEY = base64.b64decode('WWcmdGMlREV1aDYlWmNeOA==')
@@ -50,7 +50,7 @@ async def json_to_proto(json_data: str, proto_message: Message) -> bytes:
 def get_account_credentials(region: str) -> str:
     r = region.upper()
     if r == "IND":
-        return "uid=3943743932&password=49012342E2B4988CB44F4E839D88CDE1EE7BBA9FDEAC45FC0FBBDA7A237F75B3"
+        return "uid=4280878982&password=ACBB0EE6D362CAA7E628BDD92146CE00815B25437479FF4A7E2A36651F65906E"
     elif r in {"BR", "US", "SAC", "NA"}:
         return "uid=3943741681&password=5943E5875AD9571748D68ED1A81757F14215925D3547BFC3D9D18D596B2CEAB8"
     else:
