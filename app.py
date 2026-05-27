@@ -19,7 +19,7 @@ import base64
 # === Settings ===
 MAIN_KEY = base64.b64decode('WWcmdGMlREV1aDYlWmNeOA==')
 MAIN_IV = base64.b64decode('Nm95WkRyMjJFM3ljaGpNJQ==')
-RELEASEVERSION = "OB51"
+RELEASEVERSION = "OB53"
 USERAGENT = "Dalvik/2.1.0 (Linux; U; Android 13; CPH2095 Build/RKQ1.211119.001)"
 SUPPORTED_REGIONS = {"IND", "BR", "US", "SAC", "NA", "SG", "RU", "ID", "TW", "VN", "TH", "ME", "PK", "CIS", "BD", "EUROPE"}
 
@@ -50,11 +50,11 @@ async def json_to_proto(json_data: str, proto_message: Message) -> bytes:
 def get_account_credentials(region: str) -> str:
     r = region.upper()
     if r == "IND":
-        return "uid=3939412237&password=74C35008C7E8BE5B618F6B482EC73D840F863E2AF750C1317CA66D4CD74F19FB"
+        return "uid=3943743932&password=49012342E2B4988CB44F4E839D88CDE1EE7BBA9FDEAC45FC0FBBDA7A237F75B3"
     elif r in {"BR", "US", "SAC", "NA"}:
-        return "uid=3939493997&password=D08775EC0CCCEA77B2426EBC4CF04C097E0D58822804756C02738BF37578EE17"
+        return "uid=3943741681&password=5943E5875AD9571748D68ED1A81757F14215925D3547BFC3D9D18D596B2CEAB8"
     else:
-        return "uid=3939507748&password=55A6E86C5A338D133BAD02964EFB905C7C35A86440496BC210A682146DCE9F32"
+        return "uid=3943742944&password=A0E78AAC3B37D9A64E8E891842BEFCA739FD07C77184D0574FA5E721149A3394"
 
 # === Token Generation ===
 async def get_access_token(account: str):
@@ -73,9 +73,11 @@ async def create_jwt(region: str):
     proto_bytes = await json_to_proto(body, FreeFire_pb2.LoginReq())
     payload = aes_cbc_encrypt(MAIN_KEY, MAIN_IV, proto_bytes)
     url = "https://loginbp.ggblueshark.com/MajorLogin"
-    headers = {'User-Agent': USERAGENT, 'Connection': "Keep-Alive", 'Accept-Encoding': "gzip",
-               'Content-Type': "application/octet-stream", 'Expect': "100-continue", 'X-Unity-Version': "2018.4.11f1",
-               'X-GA': "v1 1", 'ReleaseVersion': RELEASEVERSION}
+    headers = {
+        'User-Agent': USERAGENT, 'Connection': "Keep-Alive", 'Accept-Encoding': "gzip",
+        'Content-Type': "application/octet-stream", 'Expect': "100-continue",
+        'X-Unity-Version': "2018.4.11f1", 'X-GA': "v1 1", 'ReleaseVersion': RELEASEVERSION
+    }
     async with httpx.AsyncClient() as client:
         resp = await client.post(url, data=payload, headers=headers)
         msg = json.loads(json_format.MessageToJson(decode_protobuf(resp.content, FreeFire_pb2.LoginRes)))
@@ -95,7 +97,7 @@ async def refresh_tokens_periodically():
         await asyncio.sleep(25200)
         await initialize_tokens()
 
-async def get_token_info(region: str) -> Tuple[str,str,str]:
+async def get_token_info(region: str) -> Tuple[str, str, str]:
     info = cached_tokens.get(region)
     if info and time.time() < info['expires_at']:
         return info['token'], info['region'], info['server_url']
@@ -110,61 +112,115 @@ async def GetAccountInformation(uid, unk, region, endpoint):
     payload = await json_to_proto(json.dumps({'a': uid, 'b': unk}), main_pb2.GetPlayerPersonalShow())
     data_enc = aes_cbc_encrypt(MAIN_KEY, MAIN_IV, payload)
     token, lock, server = await get_token_info(region)
-    headers = {'User-Agent': USERAGENT, 'Connection': "Keep-Alive", 'Accept-Encoding': "gzip",
-               'Content-Type': "application/octet-stream", 'Expect': "100-continue",
-               'Authorization': token, 'X-Unity-Version': "2018.4.11f1", 'X-GA': "v1 1",
-               'ReleaseVersion': RELEASEVERSION}
+    headers = {
+        'User-Agent': USERAGENT, 'Connection': "Keep-Alive", 'Accept-Encoding': "gzip",
+        'Content-Type': "application/octet-stream", 'Expect': "100-continue",
+        'Authorization': token, 'X-Unity-Version': "2018.4.11f1", 'X-GA': "v1 1",
+        'ReleaseVersion': RELEASEVERSION
+    }
     async with httpx.AsyncClient() as client:
-        resp = await client.post(server+endpoint, data=data_enc, headers=headers)
+        resp = await client.post(server + endpoint, data=data_enc, headers=headers)
         return json.loads(json_format.MessageToJson(decode_protobuf(resp.content, AccountPersonalShow_pb2.AccountPersonalShowInfo)))
 
-# === Caching Decorator ===
-def cached_endpoint(ttl=300):
-    def decorator(fn):
-        @wraps(fn)
-        def wrapper(*a, **k):
-            key = (request.path, tuple(request.args.items()))
-            if key in cache:
-                return cache[key]
-            res = fn(*a, **k)
-            cache[key] = res
-            return res
-        return wrapper
-    return decorator
+def format_response(data):
+    return {
+        "AccountInfo": {
+            "AccountAvatarId": data.get("basicInfo", {}).get("headPic"),
+            "AccountBPBadges": data.get("basicInfo", {}).get("badgeCnt"),
+            "AccountBPID": data.get("basicInfo", {}).get("badgeId"),
+            "AccountBannerId": data.get("basicInfo", {}).get("bannerId"),
+            "AccountCreateTime": data.get("basicInfo", {}).get("createAt"),
+            "AccountEXP": data.get("basicInfo", {}).get("exp"),
+            "AccountLastLogin": data.get("basicInfo", {}).get("lastLoginAt"),
+            "AccountLevel": data.get("basicInfo", {}).get("level"),
+            "AccountLikes": data.get("basicInfo", {}).get("liked"),
+            "AccountName": data.get("basicInfo", {}).get("nickname"),
+            "AccountRegion": data.get("basicInfo", {}).get("region"),
+            "AccountSeasonId": data.get("basicInfo", {}).get("seasonId"),
+            "AccountType": data.get("basicInfo", {}).get("accountType"),
+            "BrMaxRank": data.get("basicInfo", {}).get("maxRank"),
+            "BrRankPoint": data.get("basicInfo", {}).get("rankingPoints"),
+            "CsMaxRank": data.get("basicInfo", {}).get("csMaxRank"),
+            "CsRankPoint": data.get("basicInfo", {}).get("csRankingPoints"),
+            "EquippedWeapon": data.get("basicInfo", {}).get("weaponSkinShows", []),
+            "ReleaseVersion": data.get("basicInfo", {}).get("releaseVersion"),
+            "ShowBrRank": data.get("basicInfo", {}).get("showBrRank"),
+            "ShowCsRank": data.get("basicInfo", {}).get("showCsRank"),
+            "Title": data.get("basicInfo", {}).get("title")
+        },
+        "AccountProfileInfo": {
+            "EquippedOutfit": data.get("profileInfo", {}).get("clothes", []),
+            "EquippedSkills": data.get("profileInfo", {}).get("equipedSkills", [])
+        },
+        "GuildInfo": {
+            "GuildCapacity": data.get("clanBasicInfo", {}).get("capacity"),
+            "GuildID": str(data.get("clanBasicInfo", {}).get("clanId")),
+            "GuildLevel": data.get("clanBasicInfo", {}).get("clanLevel"),
+            "GuildMember": data.get("clanBasicInfo", {}).get("memberNum"),
+            "GuildName": data.get("clanBasicInfo", {}).get("clanName"),
+            "GuildOwner": str(data.get("clanBasicInfo", {}).get("captainId"))
+        },
+        "captainBasicInfo": {
+            "EquippedWeapon": data.get("captainBasicInfo", {}).get("weaponSkinShows", []),
+            "accountId": str(data.get("captainBasicInfo", {}).get("accountId")),
+            "accountType": data.get("captainBasicInfo", {}).get("accountType"),
+            "badgeCnt": data.get("captainBasicInfo", {}).get("badgeCnt"),
+            "badgeId": str(data.get("captainBasicInfo", {}).get("badgeId")),
+            "bannerId": str(data.get("captainBasicInfo", {}).get("bannerId")),
+            "createAt": str(data.get("captainBasicInfo", {}).get("createAt")),
+            "csMaxRank": data.get("captainBasicInfo", {}).get("csMaxRank"),
+            "csRank": data.get("captainBasicInfo", {}).get("csMaxRank"),
+            "csRankingPoints": data.get("captainBasicInfo", {}).get("csRankingPoints"),
+            "exp": data.get("captainBasicInfo", {}).get("exp"),
+            "headPic": str(data.get("captainBasicInfo", {}).get("headPic")),
+            "lastLoginAt": str(data.get("captainBasicInfo", {}).get("lastLoginAt")),
+            "level": data.get("captainBasicInfo", {}).get("level"),
+            "liked": data.get("captainBasicInfo", {}).get("liked"),
+            "maxRank": data.get("captainBasicInfo", {}).get("maxRank"),
+            "nickname": data.get("captainBasicInfo", {}).get("nickname"),
+            "rank": data.get("captainBasicInfo", {}).get("maxRank"),
+            "rankingPoints": data.get("captainBasicInfo", {}).get("rankingPoints"),
+            "region": data.get("captainBasicInfo", {}).get("region"),
+            "releaseVersion": data.get("captainBasicInfo", {}).get("releaseVersion"),
+            "seasonId": data.get("captainBasicInfo", {}).get("seasonId"),
+            "showBrRank": data.get("captainBasicInfo", {}).get("showBrRank"),
+            "showCsRank": data.get("captainBasicInfo", {}).get("showCsRank"),
+            "title": data.get("captainBasicInfo", {}).get("title")
+        },
+        "creditScoreInfo": {
+            "creditScore": data.get("creditScoreInfo", {}).get("creditScore"),
+            "periodicSummaryEndTime": str(data.get("creditScoreInfo", {}).get("periodicSummaryEndTime")),
+            "periodicSummaryStartTime": str(data.get("creditScoreInfo", {}).get("periodicSummaryStartTime"))
+        },
+        "petInfo": data.get("petInfo", {}),
+        "socialinfo": {
+            "AccountLanguage": data.get("socialInfo", {}).get("language"),
+            "AccountPreferMode": data.get("socialInfo", {}).get("modePrefer"),
+            "AccountSignature": data.get("socialInfo", {}).get("signature")
+        }
+    }
 
-# === Flask Routes ===
-@app.route('/info')
-@cached_endpoint()
+# === API Routes ===
+@app.route('/player-info')
 def get_account_info():
     region = request.args.get('region')
     uid = request.args.get('uid')
-
-    # Pehle basic validation
-    if not uid:
-        return jsonify({"error": "Please provide UID."}), 400
-
-    if not region:
-        return jsonify({"error": "Please provide REGION."}), 400
-
+    if not uid or not region:
+        return jsonify({"error": "Please provide UID and REGION."}), 400
     try:
-        # API call
         return_data = asyncio.run(GetAccountInformation(uid, "7", region, "/GetPlayerPersonalShow"))
-
-        # Agar data mila toh usko beautify karke bhejo
-        formatted_json = json.dumps(return_data, indent=2, ensure_ascii=False)
-        return formatted_json, 200, {'Content-Type': 'application/json; charset=utf-8'}
-
+        formatted = format_response(return_data)
+        return jsonify(formatted), 200
     except Exception as e:
-        # Agar koi error aaye toh yeh catch karega
-        return jsonify({"error": "Invalid UID or Region. Please check and try again."}), 500
+        return jsonify({"error": f"Invalid UID or Region. Please check and try again."}), 500
 
-@app.route('/refresh', methods=['GET','POST'])
+@app.route('/refresh', methods=['GET', 'POST'])
 def refresh_tokens_endpoint():
     try:
         asyncio.run(initialize_tokens())
-        return jsonify({'message':'Tokens refreshed for all regions.'}),200
+        return jsonify({'message': 'Tokens refreshed for all regions.'}), 200
     except Exception as e:
-        return jsonify({'error': f'Refresh failed: {e}'}),500
+        return jsonify({'error': f'Refresh failed: {e}'}), 500
 
 # === Startup ===
 async def startup():
