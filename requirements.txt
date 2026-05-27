@@ -1,9 +1,7 @@
+asyncio
+httpx
 flask
-pg8000
-aiohttp
-requests
-python-dotenv
-gunicorn
+flask-cors
+cachetools
 protobuf
 pycryptodome
-apscheduler
