@@ -1,7 +1,6 @@
-asyncio
-httpx
+urllib3
+requests
+aiohttp
 flask
-flask-cors
-cachetools
-protobuf
+flask-caching
 pycryptodome
